@@ -1,0 +1,161 @@
+
+(* @NESTEDCOMMENTS := 'Yes' *)
+(* @PATH := '' *)
+(* @OBJECTFLAGS := '0, 8' *)
+(* @SYMFILEFLAGS := '2048' *)
+(* (c) Paul Innovation and Electronics B.V. 2025 *)
+(* MIT license *)
+
+FUNCTION_BLOCK SDOTransfer
+
+	(*This function block abstracts calls to the EPEC CANOpen SDO driver,
+ 	outputing a simple "xIsHealthy" value if the transfer is successful in 
+	a good timing. 
+	It also handles the periodic, or one-shot transfer of the object, to any object dictionary.
+	Pre-requisite: the CANOpen network (slave and master devices) is in the NMT operational state. *)
+
+VAR_INPUT
+
+	(* Channel is index of EPEC driver channel of network (channel 1= 0 ) *)
+	byCanChannel :BYTE := 0;
+	(*Epec driver transfer timeout, after which the command is failing as "timed out" *)
+	timCommandTimeout : TIME := T#750MS;
+
+	(* CANOpen Node ID, index, subindex and object type. *)
+	(* Note: default NodeId is invalid, (max is 127) *)
+	byNodeId : BYTE := 255;
+	wObjectIndex : WORD := 0;
+	byObjectSubIndex : BYTE := 0;
+	xIsWriteTransfer : BOOL := TRUE;
+
+	(* Address and size of the variable to transfer. Do not leave at 0, 0*)
+	(* In case of an oject read, the data at DataAdr will be updated *)
+	(* This module does not provide a means to know if the data at the address is new,
+		and is not thread safe when using periodic transfer *)
+	dwDataAdr : DWORD := 0;
+	dwDataSize : DWORD := 0;
+
+	(* Set the update policy*)
+	(* Auto update if the transfer is to be triggered periodically *)
+	xAutoUpdate : BOOL := TRUE;
+	(* One-shot transfer of the SDO. Set to true one call, it will revert to false once
+		the transfer and the period timer has elapsed. *)
+	xUpdate : BOOL := FALSE;
+	(* Minimum time between two transfers, enforced as well for one-shot updates. *)
+	timPeriodTimer : TIME := T#1s;
+
+
+END_VAR
+
+VAR_OUTPUT
+	(*Returns TRUE on successful transfer at the CANOpen level *)
+	xIsHealthy : BOOL := FALSE;
+
+END_VAR
+
+VAR
+	(* If the node ID changes, enforces a re-initialization of the FB*)
+	byCurrentNode : BYTE := 255;
+	(* Function block to use the EPEC driver *)
+	fbCommand : CANopenCSDOTransfer;
+	(*Timer to monitor minimal delays and periodic sends *)
+	fbTimer : TON;
+	(* State of the transfer state machine *)
+	eTransferState : CSDO_TRANSFER_STATE := CSDO_INIT;
+	(* Epec CANOpen driver's last error. Useful for debugging *)
+	iLastError : INT := 0;
+
+END_VAR
+
+(* @END_DECLARATION := '0' *)
+
+(* In case the node ID changed, Re-Initialize Module *)
+IF byCurrentNode <> byNodeId THEN
+	byCurrentNode := byNodeId;
+	eTransferState := CSDO_INIT;
+END_IF;
+
+
+(* State machine for periodic / minimal interval transfers *)
+CASE eTransferState OF
+
+	CSDO_INIT:
+		(* De-activate transfer and initialize command *)
+		fbCommand( i_Enable := FALSE );
+		fbTimer( IN := TRUE, PT:= timPeriodTimer);
+
+		(* Send first request after the first period *)
+		IF fbTimer.Q THEN
+			eTransferState := CSDO_REQUEST;
+		END_IF
+
+	(* Start a new request with the CANOpen driver *)
+	CSDO_REQUEST:
+		(* Reset Delay Timer*)
+		fbTimer( IN := FALSE, PT:= timPeriodTimer);
+		fbCommand(
+			i_Enable := TRUE,
+			i_Channel := byCanChannel,
+			i_NodeID := byCurrentNode,
+			i_Index := wObjectIndex,
+			i_SubIndex := byObjectSubIndex,
+			i_Data := dwDataAdr ,
+			i_Size := dwDataSize,
+			i_Write := xIsWriteTransfer,
+			i_Stop := FALSE,
+			i_TimeOut := timCommandTimeout,
+			i_DontChgByteOrd := FALSE,
+			i_TimeOut_ReqResp := timCommandTimeout
+		);
+
+		(* Resets the update request when autoupdate is not set *)
+		IF xAutoUpdate = FALSE THEN
+			xUpdate := FALSE;
+		END_IF
+		eTransferState := CSDO_WAIT_TRANSFER;
+
+	(* Run the command state machine on the driver's side, and handles the result *)
+	CSDO_WAIT_TRANSFER:
+
+		fbCommand( i_Enable := TRUE );
+		(* Wait / Check that the previous transfer was done *)
+		(*State 0 or 3 are inactive states, Default or Idle *)
+		IF fbCommand.o_Ready THEN
+			IF fbCommand.o_State = 0 OR fbCommand.o_State = 3 THEN
+				IF fbCommand.o_Error = CANopenCSDOErrorSuccess THEN
+					xIsHealthy := TRUE;
+					fbTimer( IN := TRUE, PT:= timPeriodTimer);
+					eTransferState := CSDO_DELAY_REQUEST;
+				ELSE
+					iLastError := fbCommand.o_Error;
+					eTransferState := CSDO_INIT;
+					xIsHealthy := FALSE;
+				END_IF; (* Error / Success *)
+			END_IF; (* Transfer State *)
+			fbCommand( i_Enable := FALSE );
+		END_IF (* transfer ready*)
+
+	(* Wait for the minimal time between two transfers as parametered*)
+	CSDO_DELAY_REQUEST:
+		fbCommand( i_Enable := FALSE );
+		fbTimer( IN := TRUE, PT:= timPeriodTimer);
+		IF fbTimer.Q THEN
+			IF xAutoUpdate OR xUpdate = TRUE THEN
+				eTransferState := CSDO_REQUEST;
+			ELSE
+				eTransferState := CSDO_IDLE;
+			END_IF (* Auto Update *)
+		END_IF; (*Timer end*)
+
+	(*Wait for new request to transfer*)
+	CSDO_IDLE:
+		IF xUpdate = TRUE THEN
+			eTransferState := CSDO_REQUEST;
+		END_IF;
+
+	(*Error situation, default case, re-init*)
+	ELSE
+		eTransferState := CSDO_INIT;
+
+END_CASE
+END_FUNCTION_BLOCK

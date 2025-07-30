@@ -1,0 +1,97 @@
+
+(* @NESTEDCOMMENTS := 'Yes' *)
+(* @PATH := '' *)
+(* @OBJECTFLAGS := '0, 8' *)
+(* @SYMFILEFLAGS := '2048' *)
+(* (c) Paul Innovation and Electronics B.V. 2025 *)
+(* MIT license *)
+
+PROGRAM Main
+VAR
+
+	(* Instantiate a function block to handle the SDO send / receive *)
+	fbSDO : SDOTransfer;
+
+	(* The dummy data sent will be every second, monitores by this timer *)
+	fbTimer : TON;
+
+	(* Word (2 bytes) sent over the SDO. Simple count of seconds. *)
+	wCount : WORD := 0;
+
+END_VAR
+
+VAR CONSTANT
+	(*Defining the wanted transfer parameters:
+	Can is on CAN1 of the 3606, the updated object is 
+	on a device with CANOpen Node ID 4, index 0x2204 and 
+	subindex 0x01, and is on 2 bytes (word, or uint16) 
+	We will auto-update the value roughly every second *)
+
+	(* The EPEC CANOpen channel (0= Network 1) *)
+	TEST_SDO_CAN_CHANNEL : BYTE := 0;
+	(*Timeout after which the EPEC driver considers the transfer failed*)
+	TEST_SDO_TIMEOUT : TIME := T#750MS;
+
+	(* FB auto update parameters *)
+	TEST_SDO_AUTO_UPDATE : BOOL := TRUE;
+	TEST_SDO_UPDATE_PERIOD : TIME := T#1S
+
+	(* Node ID and CANOpen index / subindex, transfer type where the
+		SDO Object is transferred *)
+	TEST_SDO_NODE_ID : BYTE := 4;
+	TEST_SDO_OBJECT_INDEX : WORD := 16#2204;
+	TEST_SDO_OBJECT_SUBINDEX : BYTE := 1;
+	TEST_SDO_WRITE_OBJECT : BOOL := TRUE;
+
+	(* Data size in bytes of the obeject to write or read *)
+	TEST_SDO_DATA_SIZE : DWORD := 2;
+
+END_VAR
+
+(* @END_DECLARATION := '0' *)
+
+
+(* Main Program (PRG) to send dummy data. *)
+(* The objective is to demonstrate the use of a FB as a means to send  periodic SDO*)
+(* This FB does not require pre-configuration such as loading an EDS or *)
+(* any knowledge of the driver or project that this SDO is valid *)
+(* We can test the result, especially the xIsHealthy output *)
+(* When the SDO is consumed, when it is ignored, and when the bus is disconnected *)
+
+(*This code only works on EPEC Codesys 2.3 CANOpen driver *)
+(*Tested with EPEC 3606 02, and an EPEC 6505 Display*)
+(*More details on www.plc-bms.com *)
+
+
+(* Checks if a second has elapsed *)
+fbTimer(IN := TRUE, PT := T#1s);
+IF fbTimer.Q THEN
+
+	(*Reset the timer*)
+	fbTimer(IN:=FALSE);
+	wCount := wCount +1;
+
+END_IF
+
+
+fbSDO(
+	(* Channel is index of EPEC Network channel (channel 1= 0 ) *)
+	byCanChannel := TEST_SDO_CAN_CHANNEL,
+	(*EPEC Driver transfer timeout*)
+	timCommandTimeout := TEST_SDO_TIMEOUT,
+
+	(* SDOTransfer Function Block update parameters*)
+	xAutoUpdate := TEST_SDO_AUTO_UPDATE,
+	timPeriodTimer := TEST_SDO_UPDATE_PERIOD,
+
+	(* CANOpen Node ID, Index, Sub-Index, transfer type *)
+	byNodeId := TEST_SDO_NODE_ID,
+	wObjectIndex  := TEST_SDO_OBJECT_INDEX,
+	byObjectSubIndex := TEST_SDO_OBJECT_SUBINDEX,
+	xIsWriteTransfer := TEST_SDO_WRITE_OBJECT,
+
+	(* CANOpen object data : make sure data size matches data type and object dictionary *)
+	dwDataAdr := ADR( wCount ) ,
+	dwDataSize := TEST_SDO_DATA_SIZE
+);
+END_PROGRAM
