@@ -1,4 +1,4 @@
-# Simple SDO Transfer in Structured Text
+# Simple SDO Transfer Function Block in Structured Text
 Codesys 2.3 SDO transfer sample using EPEC CANOpen library
 # Pre-Requisites
 ## Hardware
@@ -29,10 +29,10 @@ is not the goal of either the SDOTransfer FB nor the counter in the Main PRG.
 
 
 # Sources
-https://www.csselectronics.com/pages/canopen-tutorial-simple-intro
-https://www.can-cia.org/can-knowledge/network-management
-https://epec.fi 
-https://www.codesys.com/
+https://www.csselectronics.com/pages/canopen-tutorial-simple-intro \
+https://www.can-cia.org/can-knowledge/network-management \
+https://epec.fi \
+https://www.codesys.com/ \
 
 # Licence
 MIT Licence, (C) 2025 Paul Innovation and Electronics B.V.
